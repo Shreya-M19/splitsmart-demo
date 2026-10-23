@@ -1,9 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { supabase } from '../lib/supabaseClient';
 
-const defaultResult = { amount: 1800, people: 4, each: 450 };
+const STORAGE_KEY = 'splitsmart.groups.v1';
+const CURRENT_GROUP_KEY = 'splitsmart.currentGroupId';
+const currentUser = 'You';
 
+const defaultResult = { amount: 0, people: 0, each: 0 };
 const examples = [
   'Dinner was 1800 and we split it 4 ways',
   'Movie night was 1200 and we split it among 6 of us',
@@ -13,18 +17,189 @@ const examples = [
 const formatMoney = (value) =>
   `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
+const createId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+const generateJoinCode = () => Math.random().toString(36).slice(2, 8).toUpperCase();
+
+function parseExpenseText(text, groupId) {
+  const cleaned = String(text || '').trim();
+  if (!cleaned) return null;
+
+  const result = {
+    id: createId('exp'),
+    group_id: groupId,
+    emoji: '🧾',
+    name: 'Expense',
+    paidBy: currentUser,
+    amount: 0,
+  };
+
+  const amountMatch = cleaned.match(/\$?(\d+(?:,\d{3})*(?:\.\d+)?)/);
+  const amountValue = amountMatch ? Number(amountMatch[1].replace(/,/g, '')) : 0;
+  result.amount = amountValue;
+
+  const nameText = cleaned.replace(amountMatch?.[0] || '', '').replace(/\s+/g, ' ').trim();
+  result.name = nameText || 'Expense';
+
+  return result;
+}
+
+function buildDefaultGroups() {
+  return [
+    {
+      id: 'group-default',
+      name: 'My Group',
+      join_code: 'MYGRP1',
+      members: ['You'],
+      expenses: [
+        { id: 'seed-1', group_id: 'group-default', emoji: '🍽️', name: 'Dinner', paidBy: 'Aisha', amount: 1800 },
+        { id: 'seed-2', group_id: 'group-default', emoji: '🚕', name: 'Cab', paidBy: 'Raj', amount: 400 },
+      ],
+    },
+  ];
+}
+
 export default function Home() {
+  const [groups, setGroups] = useState([]);
+  const [currentGroupId, setCurrentGroupId] = useState('');
+  const [groupNameInput, setGroupNameInput] = useState('');
+  const [joinCodeInput, setJoinCodeInput] = useState('');
   const [sentence, setSentence] = useState(examples[0]);
   const [result, setResult] = useState(defaultResult);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async () => {
-    const text = sentence.trim();
-    if (!text) {
-      setError('Please enter a sentence to split.');
+  useEffect(() => {
+    try {
+      const savedGroups = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+      const savedCurrentId = localStorage.getItem(CURRENT_GROUP_KEY) || '';
+
+      if (savedGroups && savedGroups.length > 0) {
+        setGroups(savedGroups);
+        setCurrentGroupId(savedCurrentId || savedGroups[0].id);
+      } else {
+        const initialGroups = buildDefaultGroups();
+        setGroups(initialGroups);
+        setCurrentGroupId(initialGroups[0].id);
+      }
+    } catch {
+      const initialGroups = buildDefaultGroups();
+      setGroups(initialGroups);
+      setCurrentGroupId(initialGroups[0].id);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (groups.length) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(groups));
+      if (!currentGroupId || !groups.some((group) => group.id === currentGroupId)) {
+        setCurrentGroupId(groups[0].id);
+      }
+    }
+  }, [groups, currentGroupId]);
+
+  useEffect(() => {
+    if (currentGroupId) {
+      localStorage.setItem(CURRENT_GROUP_KEY, currentGroupId);
+    }
+  }, [currentGroupId]);
+
+  const currentGroup = useMemo(
+    () => groups.find((group) => group.id === currentGroupId) || groups[0] || null,
+    [groups, currentGroupId],
+  );
+
+  const visibleExpenses = useMemo(() => {
+    if (!currentGroup) return [];
+    return (currentGroup.expenses || []).filter((expense) => {
+      if (!expense.group_id) return true;
+      return expense.group_id === currentGroup.id;
+    });
+  }, [currentGroup]);
+
+  useEffect(() => {
+    if (!visibleExpenses.length) {
+      setResult(defaultResult);
       return;
     }
+
+    const total = visibleExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+    const people = Math.max(1, currentGroup?.members?.length || 1);
+    setResult({
+      amount: total,
+      people,
+      each: Number((total / people).toFixed(2)),
+    });
+  }, [visibleExpenses, currentGroup]);
+
+  const createGroup = () => {
+    const name = groupNameInput.trim();
+    if (!name) return;
+
+    const newGroup = {
+      id: createId('group'),
+      name,
+      join_code: generateJoinCode(),
+      members: [currentUser],
+      expenses: [],
+    };
+
+    setGroups((list) => [...list, newGroup]);
+    setCurrentGroupId(newGroup.id);
+    setGroupNameInput('');
+  };
+
+  const joinGroupByCode = async () => {
+    const code = joinCodeInput.trim();
+    if (!code) {
+      setError('Enter a join code to join a group.');
+      return;
+    }
+
+    try {
+      const { data, error: rpcError } = await supabase.rpc('join_group', { code });
+
+      if (rpcError) {
+        throw new Error(rpcError.message || 'Unable to join that group.');
+      }
+
+      const joinedId = typeof data === 'string' ? data : null;
+      const normalizedCode = code.toUpperCase();
+      const existingGroup = groups.find((group) => group.join_code === normalizedCode || group.id === joinedId);
+
+      if (existingGroup) {
+        setGroups((list) =>
+          list.map((group) =>
+            group.id === existingGroup.id
+              ? {
+                  ...group,
+                  members: Array.from(new Set([...(group.members || []), 'Friend'])),
+                }
+              : group,
+          ),
+        );
+        setCurrentGroupId(existingGroup.id);
+      } else if (joinedId) {
+        const joinedGroup = {
+          id: joinedId,
+          name: 'Joined Group',
+          join_code: normalizedCode,
+          members: ['You', 'Friend'],
+          expenses: [],
+        };
+        setGroups((list) => [...list, joinedGroup]);
+        setCurrentGroupId(joinedId);
+      }
+
+      setJoinCodeInput('');
+      setError('');
+    } catch (err) {
+      setError(err.message || 'Unable to join group with that code.');
+    }
+  };
+
+  const handleSubmit = async () => {
+    const text = sentence.trim();
+    if (!text || !currentGroup) return;
 
     setLoading(true);
     setError('');
@@ -38,20 +213,58 @@ export default function Home() {
 
       const data = await response.json();
       if (!response.ok || !data) {
-        throw new Error(data?.error || 'Split parsing failed');
+        throw new Error(data?.error || 'Could not parse the expense.');
       }
 
-      setResult({
-        amount: Number(data.amount || 0),
-        people: Number(data.people || 0),
-        each: Number(data.each || 0),
-      });
+      const parsed = parseExpenseText(text, currentGroup.id);
+      const parsedAmount = Number(data.amount || parsed?.amount || 0);
+      const parsedPeople = Number(data.people || currentGroup.members.length || 1);
+      const parsedEach = Number(data.each || (parsedPeople > 0 ? parsedAmount / parsedPeople : 0));
+
+      const expense = {
+        ...(parsed || {
+          id: createId('exp'),
+          group_id: currentGroup.id,
+          emoji: '🧾',
+          name: 'Expense',
+          paidBy: currentUser,
+          amount: parsedAmount,
+        }),
+        amount: parsedAmount,
+        paidBy: currentUser,
+        group_id: currentGroup.id,
+      };
+
+      setGroups((list) =>
+        list.map((group) =>
+          group.id === currentGroup.id
+            ? {
+                ...group,
+                expenses: [...group.expenses, expense],
+                members: Array.from(new Set([...(group.members || []), currentUser])),
+              }
+            : group,
+        ),
+      );
+
+      setSentence('');
+      setResult({ amount: parsedAmount, people: parsedPeople, each: parsedEach });
     } catch (err) {
-      setError(err.message || 'Unable to parse the sentence.');
-      setResult({ amount: 0, people: 0, each: 0 });
+      setError(err.message || 'Unable to parse expense.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const removeExpense = (expenseId) => {
+    if (!currentGroup) return;
+    setGroups((list) =>
+      list.map((group) =>
+        group.id === currentGroup.id
+          ? { ...group, expenses: group.expenses.filter((expense) => expense.id !== expenseId) }
+          : group,
+      ),
+    );
   };
 
   return (
@@ -81,13 +294,57 @@ export default function Home() {
         </section>
 
         <section style={styles.panel}>
+          <div style={styles.panelHeader}>Your groups</div>
+          <div style={styles.groupControls}>
+            <select
+              value={currentGroupId}
+              onChange={(event) => setCurrentGroupId(event.target.value)}
+              style={styles.select}
+            >
+              {groups.map((group) => (
+                <option key={group.id} value={group.id}>{group.name}</option>
+              ))}
+            </select>
+
+            <div style={styles.groupCreateRow}>
+              <input
+                style={styles.input}
+                value={groupNameInput}
+                onChange={(event) => setGroupNameInput(event.target.value)}
+                onKeyDown={(event) => event.key === 'Enter' && createGroup()}
+                placeholder="Create a new group"
+                aria-label="New group name"
+              />
+              <button style={styles.buttonGhost} onClick={createGroup}>Create group</button>
+            </div>
+
+            <div style={styles.joinCodeCard}>
+              <div style={styles.panelSubLabel}>Current group code</div>
+              <div style={styles.joinCode}>{currentGroup?.join_code || '—'}</div>
+            </div>
+
+            <div style={styles.groupCreateRow}>
+              <input
+                style={styles.input}
+                value={joinCodeInput}
+                onChange={(event) => setJoinCodeInput(event.target.value)}
+                onKeyDown={(event) => event.key === 'Enter' && joinGroupByCode()}
+                placeholder="Enter a friend’s join code"
+                aria-label="Friend join code"
+              />
+              <button style={styles.buttonGhost} onClick={joinGroupByCode}>Join group</button>
+            </div>
+          </div>
+        </section>
+
+        <section style={styles.panel}>
           <div style={styles.panelHeader}>Ask SmartSplit</div>
           <div style={styles.inputRow}>
             <input
               style={styles.input}
               value={sentence}
-              onChange={(e) => setSentence(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
+              onChange={(event) => setSentence(event.target.value)}
+              onKeyDown={(event) => event.key === 'Enter' && handleSubmit()}
               placeholder="Dinner was 1800 and we split it 4 ways"
               aria-label="Split sentence"
             />
@@ -108,29 +365,26 @@ export default function Home() {
         </section>
 
         <section style={styles.panel}>
-          <div style={styles.panelHeader}>Split result</div>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                <th style={styles.th}>Field</th>
-                <th style={styles.th}>Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td style={styles.td}>Amount</td>
-                <td style={styles.td}>{formatMoney(result.amount)}</td>
-              </tr>
-              <tr>
-                <td style={styles.td}>People</td>
-                <td style={styles.td}>{result.people}</td>
-              </tr>
-              <tr>
-                <td style={styles.td}>Each</td>
-                <td style={styles.td}>{formatMoney(result.each)}</td>
-              </tr>
-            </tbody>
-          </table>
+          <div style={styles.panelHeader}>{currentGroup ? currentGroup.name : 'Group'} expenses</div>
+          {visibleExpenses.length === 0 ? (
+            <div style={styles.emptyState}>No expenses in this group yet.</div>
+          ) : (
+            <div style={styles.list}>
+              {visibleExpenses.map((expense) => (
+                <div key={expense.id} style={styles.expenseItem}>
+                  <div style={styles.expenseEmoji}>{expense.emoji}</div>
+                  <div style={styles.expenseContent}>
+                    <div style={styles.expenseName}>{expense.name}</div>
+                    <div style={styles.expenseMeta}>paid by {expense.paidBy}</div>
+                  </div>
+                  <div style={styles.expenseAmount}>{formatMoney(expense.amount)}</div>
+                  <button style={styles.removeBtn} onClick={() => removeExpense(expense.id)} aria-label={`Remove ${expense.name}`}>
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       </div>
     </main>
@@ -219,6 +473,46 @@ const styles = {
     marginBottom: 16,
     fontSize: 18,
   },
+  panelSubLabel: {
+    fontSize: 12,
+    fontWeight: 700,
+    letterSpacing: '0.08em',
+    color: '#64748b',
+    textTransform: 'uppercase',
+  },
+  groupControls: {
+    display: 'grid',
+    gap: 12,
+  },
+  groupCreateRow: {
+    display: 'flex',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  joinCodeCard: {
+    display: 'grid',
+    gap: 8,
+    padding: '14px 16px',
+    borderRadius: 14,
+    border: '1px solid #dbeafe',
+    background: '#eff6ff',
+  },
+  joinCode: {
+    fontSize: 22,
+    fontWeight: 900,
+    letterSpacing: '0.14em',
+    color: '#1d4ed8',
+  },
+  select: {
+    width: '100%',
+    padding: '14px 14px',
+    borderRadius: 12,
+    border: '1px solid #dfe8f7',
+    background: '#f8fafc',
+    fontSize: 15,
+    fontWeight: 600,
+    color: '#0f172a',
+  },
   inputRow: {
     display: 'flex',
     gap: 12,
@@ -246,6 +540,16 @@ const styles = {
     cursor: 'pointer',
     boxShadow: '0 16px 30px -20px rgba(37,99,235,0.9)',
   },
+  buttonGhost: {
+    border: '1px solid #bfdbfe',
+    borderRadius: 14,
+    background: '#eff6ff',
+    color: '#1d4ed8',
+    fontWeight: 800,
+    fontSize: 15,
+    padding: '15px 18px',
+    cursor: 'pointer',
+  },
   error: {
     marginTop: 12,
     color: '#b91c1c',
@@ -271,25 +575,56 @@ const styles = {
     fontWeight: 700,
     cursor: 'pointer',
   },
-  table: {
-    width: '100%',
-    borderCollapse: 'collapse',
-    marginTop: 4,
+  list: {
+    display: 'grid',
+    gap: 12,
   },
-  th: {
-    textAlign: 'left',
-    padding: '12px 8px',
-    borderBottom: '1px solid #e2e8f0',
+  expenseItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    padding: '12px 0',
+    borderBottom: '1px solid #edf2f7',
+  },
+  expenseEmoji: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    background: '#f8fafc',
+    border: '1px solid #dfe8f7',
+    display: 'grid',
+    placeItems: 'center',
+    fontSize: 20,
+  },
+  expenseContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+  expenseName: {
+    fontWeight: 800,
+    fontSize: 15,
+  },
+  expenseMeta: {
+    marginTop: 2,
     color: '#64748b',
     fontSize: 12,
-    fontWeight: 800,
-    letterSpacing: '0.08em',
-    textTransform: 'uppercase',
   },
-  td: {
-    padding: '16px 8px',
-    borderBottom: '1px solid #e2e8f0',
-    fontWeight: 700,
-    fontSize: 16,
+  expenseAmount: {
+    fontWeight: 800,
+    fontSize: 15,
+    whiteSpace: 'nowrap',
+  },
+  removeBtn: {
+    border: 'none',
+    background: 'transparent',
+    color: '#64748b',
+    fontSize: 24,
+    cursor: 'pointer',
+    lineHeight: 1,
+  },
+  emptyState: {
+    color: '#64748b',
+    fontSize: 14,
+    padding: '12px 0 4px',
   },
 };
