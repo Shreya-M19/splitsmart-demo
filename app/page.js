@@ -318,14 +318,14 @@ export default function Home() {
         </section>
 
         <section style={styles.panel}>
-          <div style={styles.panelHeader}>Mock authentication</div>
+          <div style={styles.panelHeader}>Friend login</div>
           <div style={styles.authCard}>
             <div style={styles.authRow}>
               <div>
                 <div style={styles.panelSubLabel}>Logged in as</div>
                 <div style={styles.userBadge}>{currentUser}</div>
               </div>
-              <button style={styles.buttonGhost} onClick={logoutUser}>Switch user</button>
+              <button style={styles.buttonGhost} onClick={logoutUser}>Log out</button>
             </div>
             <div style={styles.groupCreateRow}>
               <input
@@ -333,10 +333,10 @@ export default function Home() {
                 value={authInput}
                 onChange={(event) => setAuthInput(event.target.value)}
                 onKeyDown={(event) => event.key === 'Enter' && loginAsUser()}
-                placeholder="Type your name"
-                aria-label="Mock user name"
+                placeholder="Type a friend name"
+                aria-label="Friend name"
               />
-              <button style={styles.buttonGhost} onClick={loginAsUser}>Continue</button>
+              <button style={styles.buttonGhost} onClick={loginAsUser}>Enter app</button>
             </div>
           </div>
         </section>
