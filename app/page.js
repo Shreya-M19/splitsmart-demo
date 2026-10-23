@@ -1,108 +1,91 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
-// The starter data — the same "My Group" you see in the course slide. You'll replace
-// this with a real database in Hour 5. For now it lives in the browser (localStorage).
-const SEED = [
-  { id: 'seed-1', emoji: '🍽️', name: 'Dinner', paidBy: 'Aisha', amount: 1800 },
-  { id: 'seed-2', emoji: '🚕', name: 'Cab', paidBy: 'Raj', amount: 400 },
-];
-
-const inr = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
-
-// Basic "parse an expense from text" — just enough to work. In Hour 3 you'll replace
-// this naive version with a real AI call (Gemini) that understands messy human sentences.
-function parseExpense(text) {
-  const amountMatch = text.match(/\d[\d,]*(\.\d+)?/);
-  const amount = amountMatch ? Number(amountMatch[0].replace(/,/g, '')) : 0;
-  const name = text.replace(/\d[\d,]*(\.\d+)?/, '').replace(/\s+/g, ' ').trim() || 'Expense';
-  return { id: 'e-' + Date.now(), emoji: '🧾', name: name.charAt(0).toUpperCase() + name.slice(1), paidBy: 'You', amount };
-}
+const formatMoney = (value) => `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
 export default function Home() {
-  const [expenses, setExpenses] = useState(SEED);
-  const [text, setText] = useState('');
-  const [ready, setReady] = useState(false);
+  const [sentence, setSentence] = useState('');
+  const [result, setResult] = useState({ amount: 0, people: 0, each: 0 });
+  const [loading, setLoading] = useState(false);
 
-  // Load any saved expenses from the browser on first render.
-  useEffect(() => {
+  const handleSubmit = async () => {
+    const text = sentence.trim();
+    if (!text) return;
+
+    setLoading(true);
+    setResult({ amount: 0, people: 0, each: 0 });
+
     try {
-      const saved = localStorage.getItem('splitsmart.expenses');
-      if (saved) setExpenses(JSON.parse(saved));
-    } catch {}
-    setReady(true);
-  }, []);
+      const response = await fetch('/api/parse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
 
-  // Save whenever the list changes.
-  useEffect(() => {
-    if (ready) {
-      try { localStorage.setItem('splitsmart.expenses', JSON.stringify(expenses)); } catch {}
+      const data = await response.json();
+      setResult({
+        amount: Number(data.amount || 0),
+        people: Number(data.people || 0),
+        each: Number(data.each || 0),
+      });
+    } catch {
+      setResult({ amount: 0, people: 0, each: 0 });
+    } finally {
+      setLoading(false);
     }
-  }, [expenses, ready]);
-
-  const total = expenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
-
-  const addExpense = () => {
-    const t = text.trim();
-    if (!t) return;
-    setExpenses((list) => [...list, parseExpense(t)]);
-    setText('');
   };
-
-  const removeExpense = (id) => setExpenses((list) => list.filter((e) => e.id !== id));
 
   return (
     <main style={styles.page}>
       <div style={styles.card}>
-        {/* Header */}
         <div style={styles.header}>
           <div style={styles.brand}>
             <div style={styles.logo}>S</div>
             <div style={styles.title}>SplitSmart</div>
           </div>
-          <div style={styles.groupPill}>My Group</div>
+          <div style={styles.groupPill}>AI Split</div>
         </div>
 
-        {/* Add an expense */}
         <div style={styles.addRow}>
           <input
             style={styles.input}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addExpense()}
-            placeholder="Add an expense…"
-            aria-label="Add an expense"
+            value={sentence}
+            onChange={(e) => setSentence(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
+            placeholder="Dinner was 1800 and we split it 4 ways"
+            aria-label="Sentence to parse"
           />
-          <button style={styles.addBtn} onClick={addExpense} aria-label="Add">+</button>
+          <button style={styles.addBtn} onClick={handleSubmit} aria-label="Parse sentence" disabled={loading}>
+            {loading ? '…' : '→'}
+          </button>
         </div>
 
-        {/* Expense list */}
-        <div style={styles.list}>
-          {expenses.length === 0 && (
-            <div style={styles.empty}>No expenses yet — add your first one above.</div>
-          )}
-          {expenses.map((e) => (
-            <div key={e.id} style={styles.item}>
-              <div style={styles.itemEmoji}>{e.emoji}</div>
-              <div style={styles.itemMain}>
-                <div style={styles.itemName}>{e.name}</div>
-                <div style={styles.itemPaid}>paid by {e.paidBy}</div>
-              </div>
-              <div style={styles.itemAmount}>{inr(e.amount)}</div>
-              <button style={styles.remove} onClick={() => removeExpense(e.id)} aria-label={`Remove ${e.name}`}>×</button>
-            </div>
-          ))}
+        <div style={styles.resultWrap}>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={styles.th}>Field</th>
+                <th style={styles.th}>Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={styles.td}>Amount</td>
+                <td style={styles.td}>{formatMoney(result.amount)}</td>
+              </tr>
+              <tr>
+                <td style={styles.td}>People</td>
+                <td style={styles.td}>{result.people}</td>
+              </tr>
+              <tr>
+                <td style={styles.td}>Each</td>
+                <td style={styles.td}>{formatMoney(result.each)}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-
-        {/* Total */}
-        <div style={styles.total}>Total {inr(total)}</div>
       </div>
-
-      <p style={styles.footnote}>
-        SplitSmart starter · deepEntra Academy — Build &amp; Ship It.<br />
-        This is the basic app — you&apos;ll add the AI and a real database next.
-      </p>
     </main>
   );
 }
@@ -111,20 +94,19 @@ const styles = {
   page: {
     minHeight: '100vh',
     display: 'flex',
-    flexDirection: 'column',
     alignItems: 'center',
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
     padding: '28px 16px 48px',
+    background: 'var(--bg)',
   },
   card: {
     width: '100%',
-    maxWidth: 420,
+    maxWidth: 520,
     background: 'var(--card)',
     borderRadius: 24,
     boxShadow: '0 24px 60px -24px rgba(13,27,62,.28)',
     border: '1px solid var(--line)',
     padding: 20,
-    marginTop: 12,
   },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 },
   brand: { display: 'flex', alignItems: 'center', gap: 10 },
@@ -148,28 +130,30 @@ const styles = {
     flex: 'none', width: 48, borderRadius: 14, border: 'none', color: '#fff', fontSize: 24, fontWeight: 700,
     background: 'linear-gradient(135deg, var(--blue), var(--cyan))',
     boxShadow: '0 10px 22px -8px rgba(28,95,212,.6)',
+    opacity: 1,
   },
-  list: { display: 'flex', flexDirection: 'column', gap: 10, minHeight: 60 },
-  empty: { color: 'var(--muted)', fontSize: 14, textAlign: 'center', padding: '24px 0' },
-  item: {
-    display: 'flex', alignItems: 'center', gap: 12,
-    background: '#f7f9fc', border: '1px solid var(--line)', borderRadius: 16, padding: '12px 14px',
+  resultWrap: {
+    border: '1px solid var(--line)',
+    borderRadius: 16,
+    background: '#f7f9fc',
+    padding: 12,
   },
-  itemEmoji: {
-    width: 38, height: 38, borderRadius: 11, display: 'grid', placeItems: 'center',
-    background: '#fff', border: '1px solid var(--line)', fontSize: 19, flex: 'none',
+  table: {
+    width: '100%',
+    borderCollapse: 'collapse',
   },
-  itemMain: { flex: 1, minWidth: 0 },
-  itemName: { fontWeight: 700, fontSize: 15 },
-  itemPaid: { color: 'var(--muted)', fontSize: 12.5, marginTop: 1 },
-  itemAmount: { fontWeight: 800, fontSize: 15.5, fontVariantNumeric: 'tabular-nums' },
-  remove: {
-    flex: 'none', width: 26, height: 26, borderRadius: 8, border: 'none',
-    background: 'transparent', color: 'var(--muted)', fontSize: 20, lineHeight: 1,
+  th: {
+    textAlign: 'left',
+    padding: '10px 12px',
+    borderBottom: '1px solid var(--line)',
+    color: 'var(--muted)',
+    fontSize: 13,
+    fontWeight: 700,
   },
-  total: {
-    textAlign: 'center', marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--line)',
-    fontWeight: 800, fontSize: 16, color: 'var(--ink)',
+  td: {
+    padding: '12px',
+    borderBottom: '1px solid var(--line)',
+    fontWeight: 600,
+    color: 'var(--ink)',
   },
-  footnote: { color: 'var(--muted)', fontSize: 12.5, textAlign: 'center', lineHeight: 1.6, marginTop: 20, maxWidth: 420 },
 };
