@@ -5,7 +5,8 @@ import { supabase } from '../lib/supabaseClient';
 
 const STORAGE_KEY = 'splitsmart.groups.v1';
 const CURRENT_GROUP_KEY = 'splitsmart.currentGroupId';
-const currentUser = 'You';
+const AUTH_KEY = 'splitsmart.auth.user.v1';
+const DEFAULT_USER = 'You';
 
 const defaultResult = { amount: 0, people: 0, each: 0 };
 const examples = [
@@ -20,7 +21,7 @@ const formatMoney = (value) =>
 const createId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 const generateJoinCode = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 
-function parseExpenseText(text, groupId) {
+function parseExpenseText(text, groupId, paidByUser = DEFAULT_USER) {
   const cleaned = String(text || '').trim();
   if (!cleaned) return null;
 
@@ -29,7 +30,7 @@ function parseExpenseText(text, groupId) {
     group_id: groupId,
     emoji: '🧾',
     name: 'Expense',
-    paidBy: currentUser,
+    paidBy: paidByUser,
     amount: 0,
   };
 
@@ -63,6 +64,8 @@ export default function Home() {
   const [currentGroupId, setCurrentGroupId] = useState('');
   const [groupNameInput, setGroupNameInput] = useState('');
   const [joinCodeInput, setJoinCodeInput] = useState('');
+  const [authInput, setAuthInput] = useState(DEFAULT_USER);
+  const [currentUser, setCurrentUser] = useState(DEFAULT_USER);
   const [sentence, setSentence] = useState(examples[0]);
   const [result, setResult] = useState(defaultResult);
   const [error, setError] = useState('');
@@ -70,6 +73,11 @@ export default function Home() {
 
   useEffect(() => {
     try {
+      const savedUser = localStorage.getItem(AUTH_KEY) || DEFAULT_USER;
+      const cleanUser = savedUser.trim() || DEFAULT_USER;
+      setCurrentUser(cleanUser);
+      setAuthInput(cleanUser);
+
       const savedGroups = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
       const savedCurrentId = localStorage.getItem(CURRENT_GROUP_KEY) || '';
 
@@ -103,6 +111,10 @@ export default function Home() {
     }
   }, [currentGroupId]);
 
+  useEffect(() => {
+    localStorage.setItem(AUTH_KEY, currentUser);
+  }, [currentUser]);
+
   const currentGroup = useMemo(
     () => groups.find((group) => group.id === currentGroupId) || groups[0] || null,
     [groups, currentGroupId],
@@ -130,6 +142,18 @@ export default function Home() {
       each: Number((total / people).toFixed(2)),
     });
   }, [visibleExpenses, currentGroup]);
+
+  const loginAsUser = () => {
+    const nextUser = authInput.trim() || DEFAULT_USER;
+    setCurrentUser(nextUser);
+    setAuthInput(nextUser);
+  };
+
+  const logoutUser = () => {
+    setCurrentUser(DEFAULT_USER);
+    setAuthInput(DEFAULT_USER);
+    localStorage.removeItem(AUTH_KEY);
+  };
 
   const createGroup = () => {
     const name = groupNameInput.trim();
@@ -216,7 +240,7 @@ export default function Home() {
         throw new Error(data?.error || 'Could not parse the expense.');
       }
 
-      const parsed = parseExpenseText(text, currentGroup.id);
+      const parsed = parseExpenseText(text, currentGroup.id, currentUser);
       const parsedAmount = Number(data.amount || parsed?.amount || 0);
       const parsedPeople = Number(data.people || currentGroup.members.length || 1);
       const parsedEach = Number(data.each || (parsedPeople > 0 ? parsedAmount / parsedPeople : 0));
@@ -290,6 +314,30 @@ export default function Home() {
           <div style={styles.cardSummary}>
             <div style={styles.cardLabel}>Each pays</div>
             <div style={styles.cardValue}>{formatMoney(result.each)}</div>
+          </div>
+        </section>
+
+        <section style={styles.panel}>
+          <div style={styles.panelHeader}>Mock authentication</div>
+          <div style={styles.authCard}>
+            <div style={styles.authRow}>
+              <div>
+                <div style={styles.panelSubLabel}>Logged in as</div>
+                <div style={styles.userBadge}>{currentUser}</div>
+              </div>
+              <button style={styles.buttonGhost} onClick={logoutUser}>Switch user</button>
+            </div>
+            <div style={styles.groupCreateRow}>
+              <input
+                style={styles.input}
+                value={authInput}
+                onChange={(event) => setAuthInput(event.target.value)}
+                onKeyDown={(event) => event.key === 'Enter' && loginAsUser()}
+                placeholder="Type your name"
+                aria-label="Mock user name"
+              />
+              <button style={styles.buttonGhost} onClick={loginAsUser}>Continue</button>
+            </div>
           </div>
         </section>
 
@@ -479,6 +527,24 @@ const styles = {
     letterSpacing: '0.08em',
     color: '#64748b',
     textTransform: 'uppercase',
+  },
+  authCard: {
+    display: 'grid',
+    gap: 12,
+    padding: '8px 0 0',
+  },
+  authRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  userBadge: {
+    marginTop: 6,
+    fontSize: 22,
+    fontWeight: 900,
+    color: '#1d4ed8',
   },
   groupControls: {
     display: 'grid',
