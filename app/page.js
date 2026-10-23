@@ -2,19 +2,32 @@
 
 import { useState } from 'react';
 
-const formatMoney = (value) => `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+const defaultResult = { amount: 1800, people: 4, each: 450 };
+
+const examples = [
+  'Dinner was 1800 and we split it 4 ways',
+  'Movie night was 1200 and we split it among 6 of us',
+  'Cab bill came to 600 for 3 friends',
+];
+
+const formatMoney = (value) =>
+  `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
 export default function Home() {
-  const [sentence, setSentence] = useState('');
-  const [result, setResult] = useState({ amount: 0, people: 0, each: 0 });
+  const [sentence, setSentence] = useState(examples[0]);
+  const [result, setResult] = useState(defaultResult);
+  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async () => {
     const text = sentence.trim();
-    if (!text) return;
+    if (!text) {
+      setError('Please enter a sentence to split.');
+      return;
+    }
 
     setLoading(true);
-    setResult({ amount: 0, people: 0, each: 0 });
+    setError('');
 
     try {
       const response = await fetch('/api/parse', {
@@ -24,12 +37,17 @@ export default function Home() {
       });
 
       const data = await response.json();
+      if (!response.ok || !data) {
+        throw new Error(data?.error || 'Split parsing failed');
+      }
+
       setResult({
         amount: Number(data.amount || 0),
         people: Number(data.people || 0),
         each: Number(data.each || 0),
       });
-    } catch {
+    } catch (err) {
+      setError(err.message || 'Unable to parse the sentence.');
       setResult({ amount: 0, people: 0, each: 0 });
     } finally {
       setLoading(false);
@@ -38,30 +56,59 @@ export default function Home() {
 
   return (
     <main style={styles.page}>
-      <div style={styles.card}>
-        <div style={styles.header}>
-          <div style={styles.brand}>
-            <div style={styles.logo}>S</div>
-            <div style={styles.title}>SplitSmart</div>
+      <div style={styles.shell}>
+        <header style={styles.header}>
+          <div>
+            <div style={styles.eyebrow}>SmartSplit dashboard</div>
+            <h1 style={styles.title}>Group expense overview</h1>
           </div>
-          <div style={styles.groupPill}>AI Split</div>
-        </div>
+          <div style={styles.badge}>Live</div>
+        </header>
 
-        <div style={styles.addRow}>
-          <input
-            style={styles.input}
-            value={sentence}
-            onChange={(e) => setSentence(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
-            placeholder="Dinner was 1800 and we split it 4 ways"
-            aria-label="Sentence to parse"
-          />
-          <button style={styles.addBtn} onClick={handleSubmit} aria-label="Parse sentence" disabled={loading}>
-            {loading ? '…' : '→'}
-          </button>
-        </div>
+        <section style={styles.summaryGrid}>
+          <div style={styles.cardSummary}>
+            <div style={styles.cardLabel}>Total bill</div>
+            <div style={styles.cardValue}>{formatMoney(result.amount)}</div>
+          </div>
+          <div style={styles.cardSummary}>
+            <div style={styles.cardLabel}>People</div>
+            <div style={styles.cardValue}>{result.people}</div>
+          </div>
+          <div style={styles.cardSummary}>
+            <div style={styles.cardLabel}>Each pays</div>
+            <div style={styles.cardValue}>{formatMoney(result.each)}</div>
+          </div>
+        </section>
 
-        <div style={styles.resultWrap}>
+        <section style={styles.panel}>
+          <div style={styles.panelHeader}>Ask SmartSplit</div>
+          <div style={styles.inputRow}>
+            <input
+              style={styles.input}
+              value={sentence}
+              onChange={(e) => setSentence(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
+              placeholder="Dinner was 1800 and we split it 4 ways"
+              aria-label="Split sentence"
+            />
+            <button style={styles.button} onClick={handleSubmit} disabled={loading}>
+              {loading ? 'Parsing...' : 'Split it'}
+            </button>
+          </div>
+
+          {error && <div style={styles.error}>{error}</div>}
+
+          <div style={styles.examplesRow}>
+            {examples.map((example) => (
+              <button key={example} style={styles.exampleChip} onClick={() => setSentence(example)}>
+                {example}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section style={styles.panel}>
+          <div style={styles.panelHeader}>Split result</div>
           <table style={styles.table}>
             <thead>
               <tr>
@@ -84,7 +131,7 @@ export default function Home() {
               </tr>
             </tbody>
           </table>
-        </div>
+        </section>
       </div>
     </main>
   );
@@ -93,67 +140,156 @@ export default function Home() {
 const styles = {
   page: {
     minHeight: '100vh',
+    background: 'linear-gradient(135deg, #eef4ff 0%, #f8fafc 100%)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: '28px 16px 48px',
-    background: 'var(--bg)',
+    padding: '32px 16px',
+    color: '#0f172a',
+    fontFamily: 'Inter, system-ui, sans-serif',
   },
-  card: {
+  shell: {
     width: '100%',
-    maxWidth: 520,
-    background: 'var(--card)',
-    borderRadius: 24,
-    boxShadow: '0 24px 60px -24px rgba(13,27,62,.28)',
-    border: '1px solid var(--line)',
+    maxWidth: 980,
+    display: 'grid',
+    gap: 18,
+  },
+  header: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  eyebrow: {
+    fontSize: 12,
+    fontWeight: 800,
+    letterSpacing: '0.12em',
+    textTransform: 'uppercase',
+    color: '#4567d8',
+  },
+  title: {
+    margin: '8px 0 0',
+    fontSize: 'clamp(2rem, 5vw, 2.8rem)',
+    lineHeight: 1.1,
+    letterSpacing: '-0.04em',
+  },
+  badge: {
+    background: '#dbeafe',
+    color: '#1d4ed8',
+    border: '1px solid rgba(29,78,216,0.2)',
+    borderRadius: 999,
+    padding: '8px 12px',
+    fontWeight: 700,
+    fontSize: 12,
+  },
+  summaryGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: 16,
+  },
+  cardSummary: {
+    background: '#ffffff',
+    border: '1px solid #dfe8f7',
+    borderRadius: 20,
+    boxShadow: '0 18px 40px -24px rgba(15, 23, 42, 0.35)',
     padding: 20,
   },
-  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 },
-  brand: { display: 'flex', alignItems: 'center', gap: 10 },
-  logo: {
-    width: 36, height: 36, borderRadius: 11, display: 'grid', placeItems: 'center',
-    color: '#fff', fontWeight: 800, fontSize: 18,
-    background: 'linear-gradient(135deg, var(--blue), var(--cyan))',
-    boxShadow: '0 8px 18px -6px rgba(28,95,212,.55)',
+  cardLabel: {
+    color: '#64748b',
+    fontSize: 12,
+    fontWeight: 700,
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
   },
-  title: { fontSize: 20, fontWeight: 800, letterSpacing: '-0.01em' },
-  groupPill: {
-    fontSize: 12.5, fontWeight: 800, color: 'var(--blue)',
-    background: 'rgba(28,95,212,.1)', padding: '6px 12px', borderRadius: 999,
+  cardValue: {
+    marginTop: 12,
+    fontSize: 'clamp(1.7rem, 3vw, 2.5rem)',
+    fontWeight: 800,
+    letterSpacing: '-0.05em',
   },
-  addRow: { display: 'flex', gap: 10, marginBottom: 16 },
+  panel: {
+    background: '#ffffff',
+    border: '1px solid #dfe8f7',
+    borderRadius: 22,
+    boxShadow: '0 18px 40px -24px rgba(15, 23, 42, 0.35)',
+    padding: 20,
+  },
+  panelHeader: {
+    fontWeight: 800,
+    marginBottom: 16,
+    fontSize: 18,
+  },
+  inputRow: {
+    display: 'flex',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
   input: {
-    flex: 1, border: '1px solid var(--line)', borderRadius: 14, padding: '13px 15px',
-    fontSize: 15, outline: 'none', background: '#f7f9fc', color: 'var(--ink)',
+    flex: 1,
+    minWidth: 220,
+    padding: '15px 16px',
+    borderRadius: 14,
+    border: '1px solid #dbe3f1',
+    background: '#f8fafc',
+    fontSize: 15,
+    outline: 'none',
+    color: '#0f172a',
   },
-  addBtn: {
-    flex: 'none', width: 48, borderRadius: 14, border: 'none', color: '#fff', fontSize: 24, fontWeight: 700,
-    background: 'linear-gradient(135deg, var(--blue), var(--cyan))',
-    boxShadow: '0 10px 22px -8px rgba(28,95,212,.6)',
-    opacity: 1,
+  button: {
+    border: 'none',
+    borderRadius: 14,
+    background: 'linear-gradient(135deg, #2563eb, #38bdf8)',
+    color: '#ffffff',
+    fontWeight: 800,
+    fontSize: 15,
+    padding: '15px 22px',
+    cursor: 'pointer',
+    boxShadow: '0 16px 30px -20px rgba(37,99,235,0.9)',
   },
-  resultWrap: {
-    border: '1px solid var(--line)',
-    borderRadius: 16,
-    background: '#f7f9fc',
-    padding: 12,
+  error: {
+    marginTop: 12,
+    color: '#b91c1c',
+    background: '#fef2f2',
+    border: '1px solid #fecaca',
+    borderRadius: 12,
+    padding: '10px 12px',
+    fontSize: 14,
+  },
+  examplesRow: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 16,
+  },
+  exampleChip: {
+    background: '#eff6ff',
+    border: '1px solid #bfdbfe',
+    color: '#1d4ed8',
+    borderRadius: 999,
+    padding: '8px 12px',
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: 'pointer',
   },
   table: {
     width: '100%',
     borderCollapse: 'collapse',
+    marginTop: 4,
   },
   th: {
     textAlign: 'left',
-    padding: '10px 12px',
-    borderBottom: '1px solid var(--line)',
-    color: 'var(--muted)',
-    fontSize: 13,
-    fontWeight: 700,
+    padding: '12px 8px',
+    borderBottom: '1px solid #e2e8f0',
+    color: '#64748b',
+    fontSize: 12,
+    fontWeight: 800,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
   },
   td: {
-    padding: '12px',
-    borderBottom: '1px solid var(--line)',
-    fontWeight: 600,
-    color: 'var(--ink)',
+    padding: '16px 8px',
+    borderBottom: '1px solid #e2e8f0',
+    fontWeight: 700,
+    fontSize: 16,
   },
 };
