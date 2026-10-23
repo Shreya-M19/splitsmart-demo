@@ -7,6 +7,7 @@ const STORAGE_KEY = 'splitsmart.groups.v1';
 const CURRENT_GROUP_KEY = 'splitsmart.currentGroupId';
 const AUTH_KEY = 'splitsmart.auth.user.v1';
 const USERS_KEY = 'splitsmart.users.v1';
+const GROUP_MEMBERS_KEY = 'splitsmart.group_members.v1';
 
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
 
@@ -63,6 +64,7 @@ function buildDefaultGroups() {
 
 export default function Home() {
   const [groups, setGroups] = useState([]);
+  const [groupMembers, setGroupMembers] = useState({});
   const [currentGroupId, setCurrentGroupId] = useState('');
   const [groupNameInput, setGroupNameInput] = useState('');
   const [joinCodeInput, setJoinCodeInput] = useState('');
@@ -81,19 +83,29 @@ export default function Home() {
       setAuthInput(cleanUser);
 
       const savedGroups = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+      const savedGroupMembers = JSON.parse(localStorage.getItem(GROUP_MEMBERS_KEY) || '{}');
       const savedCurrentId = localStorage.getItem(CURRENT_GROUP_KEY) || '';
 
       if (savedGroups && savedGroups.length > 0) {
         setGroups(savedGroups);
+        setGroupMembers(savedGroupMembers);
         setCurrentGroupId(savedCurrentId || savedGroups[0].id);
       } else {
         const initialGroups = buildDefaultGroups();
+        const initialMembers = {
+          [initialGroups[0].id]: initialGroups[0].members,
+        };
         setGroups(initialGroups);
+        setGroupMembers(initialMembers);
         setCurrentGroupId(initialGroups[0].id);
       }
     } catch {
       const initialGroups = buildDefaultGroups();
+      const initialMembers = {
+        [initialGroups[0].id]: initialGroups[0].members,
+      };
       setGroups(initialGroups);
+      setGroupMembers(initialMembers);
       setCurrentGroupId(initialGroups[0].id);
     }
   }, []);
@@ -101,11 +113,12 @@ export default function Home() {
   useEffect(() => {
     if (groups.length) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(groups));
+      localStorage.setItem(GROUP_MEMBERS_KEY, JSON.stringify(groupMembers));
       if (!currentGroupId || !groups.some((group) => group.id === currentGroupId)) {
         setCurrentGroupId(groups[0].id);
       }
     }
-  }, [groups, currentGroupId]);
+  }, [groups, currentGroupId, groupMembers]);
 
   useEffect(() => {
     if (currentGroupId) {
@@ -120,6 +133,11 @@ export default function Home() {
   const currentGroup = useMemo(
     () => groups.find((group) => group.id === currentGroupId) || groups[0] || null,
     [groups, currentGroupId],
+  );
+
+  const currentMembers = useMemo(
+    () => currentGroup ? (groupMembers[currentGroup.id] || currentGroup.members || []) : [],
+    [currentGroup, groupMembers],
   );
 
   const visibleExpenses = useMemo(() => {
@@ -186,6 +204,22 @@ export default function Home() {
     setError('');
   };
 
+  const addGroupMember = (groupId, email) => {
+    const normalized = normalizeEmail(email);
+    if (!normalized) return;
+    setGroupMembers((prev) => ({
+      ...prev,
+      [groupId]: Array.from(new Set([...(prev[groupId] || []), normalized])),
+    }));
+    setGroups((list) =>
+      list.map((group) =>
+        group.id === groupId
+          ? { ...group, members: Array.from(new Set([...(group.members || []), normalized])) }
+          : group,
+      ),
+    );
+  };
+
   const createGroup = () => {
     const name = groupNameInput.trim();
     if (!currentUser) {
@@ -198,10 +232,14 @@ export default function Home() {
       id: createId('group'),
       name,
       join_code: generateJoinCode(),
-      members: currentUser ? [currentUser] : [],
+      members: [currentUser],
       expenses: [],
     };
 
+    setGroupMembers((prev) => ({
+      ...prev,
+      [newGroup.id]: [currentUser],
+    }));
     setGroups((list) => [...list, newGroup]);
     setCurrentGroupId(newGroup.id);
     setGroupNameInput('');
@@ -230,16 +268,8 @@ export default function Home() {
       const existingGroup = groups.find((group) => group.join_code === normalizedCode || group.id === joinedId);
 
       if (existingGroup) {
-        setGroups((list) =>
-          list.map((group) =>
-            group.id === existingGroup.id
-              ? {
-                  ...group,
-                  members: Array.from(new Set([...(group.members || []), currentUser || 'friend@demo.test'])),
-                }
-              : group,
-          ),
-        );
+        const nextMember = currentUser || 'friend@demo.test';
+        addGroupMember(existingGroup.id, nextMember);
         setCurrentGroupId(existingGroup.id);
       } else if (joinedId) {
         const joinedGroup = {
@@ -313,6 +343,10 @@ export default function Home() {
             : group,
         ),
       );
+      setGroupMembers((prev) => ({
+        ...prev,
+        [currentGroup.id]: Array.from(new Set([...(prev[currentGroup.id] || currentGroup.members || []), currentUser])),
+      }));
 
       setSentence('');
       setResult({ amount: parsedAmount, people: parsedPeople, each: parsedEach });
@@ -337,38 +371,98 @@ export default function Home() {
   return (
     <main style={styles.page}>
       <div style={styles.shell}>
-        <header style={styles.header}>
-          <div>
-            <div style={styles.eyebrow}>SmartSplit dashboard</div>
-            <h1 style={styles.title}>Group expense overview</h1>
+        <aside style={styles.sidebar}>
+          <div style={styles.brandRow}>
+            <div style={styles.brandDot} />
+            <div>
+              <div style={styles.eyebrow}>SmartSplit</div>
+              <div style={styles.brandName}>Split smarter</div>
+            </div>
           </div>
-          <div style={styles.badge}>Live</div>
-        </header>
 
-        <section style={styles.summaryGrid}>
-          <div style={styles.cardSummary}>
-            <div style={styles.cardLabel}>Total bill</div>
-            <div style={styles.cardValue}>{formatMoney(result.amount)}</div>
+          <div style={styles.userCard}>
+            <div style={styles.panelSubLabel}>Signed in</div>
+            <div style={styles.userBadge}>{currentUser || 'No email login'}</div>
           </div>
-          <div style={styles.cardSummary}>
-            <div style={styles.cardLabel}>People</div>
-            <div style={styles.cardValue}>{result.people}</div>
-          </div>
-          <div style={styles.cardSummary}>
-            <div style={styles.cardLabel}>Each pays</div>
-            <div style={styles.cardValue}>{formatMoney(result.each)}</div>
-          </div>
-        </section>
 
-        <section style={styles.panel}>
-          <div style={styles.panelHeader}>Email login</div>
-          <div style={styles.authCard}>
+          <div style={styles.sectionTitle}>Groups</div>
+          <div style={styles.groupList}>
+            {groups.map((group) => (
+              <button
+                key={group.id}
+                onClick={() => setCurrentGroupId(group.id)}
+                style={{
+                  ...styles.groupItem,
+                  ...(group.id === currentGroupId ? styles.groupItemActive : {}),
+                }}
+              >
+                <div>
+                  <div style={styles.groupName}>{group.name}</div>
+                  <div style={styles.groupMeta}>{(group.members || []).length} members</div>
+                </div>
+                <div style={styles.groupPill}>{group.join_code}</div>
+              </button>
+            ))}
+          </div>
+
+          <div style={styles.sectionTitle}>Add group</div>
+          <div style={styles.groupCreateRow}>
+            <input
+              style={styles.input}
+              value={groupNameInput}
+              onChange={(event) => setGroupNameInput(event.target.value)}
+              onKeyDown={(event) => event.key === 'Enter' && createGroup()}
+              placeholder="Group name"
+              aria-label="New group name"
+            />
+            <button style={styles.buttonGhost} onClick={createGroup}>New</button>
+          </div>
+
+          <div style={styles.joinCard}>
+            <div style={styles.panelSubLabel}>Join code</div>
+            <div style={styles.joinCode}>{currentGroup?.join_code || '—'}</div>
+            <input
+              style={styles.inputSmall}
+              value={joinCodeInput}
+              onChange={(event) => setJoinCodeInput(event.target.value)}
+              onKeyDown={(event) => event.key === 'Enter' && joinGroupByCode()}
+              placeholder="Paste code"
+              aria-label="Friend join code"
+            />
+            <button style={styles.button} onClick={joinGroupByCode}>Join group</button>
+          </div>
+        </aside>
+
+        <div style={styles.mainContent}>
+          <header style={styles.header}>
+            <div>
+              <div style={styles.eyebrow}>Group overview</div>
+              <h1 style={styles.title}>{currentGroup ? currentGroup.name : 'Select a group'}</h1>
+            </div>
+            <button style={styles.buttonGhost} onClick={logoutUser}>Log out</button>
+          </header>
+
+          <section style={styles.summaryGrid}>
+            <div style={styles.cardSummary}>
+              <div style={styles.cardLabel}>Total bill</div>
+              <div style={styles.cardValue}>{formatMoney(result.amount)}</div>
+            </div>
+            <div style={styles.cardSummary}>
+              <div style={styles.cardLabel}>Members</div>
+              <div style={styles.cardValue}>{currentMembers.length}</div>
+            </div>
+            <div style={styles.cardSummary}>
+              <div style={styles.cardLabel}>Each pays</div>
+              <div style={styles.cardValue}>{formatMoney(result.each)}</div>
+            </div>
+          </section>
+
+          <section style={styles.panel}>
             <div style={styles.authRow}>
               <div>
-                <div style={styles.panelSubLabel}>Logged in as</div>
-                <div style={styles.userBadge}>{currentUser || 'No one logged in'}</div>
+                <div style={styles.panelSubLabel}>Email login</div>
+                <div style={styles.userBadgeLarge}>{currentUser || 'No email logged in'}</div>
               </div>
-              <button style={styles.buttonGhost} onClick={logoutUser}>Log out</button>
             </div>
             <div style={styles.groupCreateRow}>
               <input
@@ -382,102 +476,67 @@ export default function Home() {
               />
               <button style={styles.buttonGhost} onClick={loginAsUser}>Login</button>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <section style={styles.panel}>
-          <div style={styles.panelHeader}>Your groups</div>
-          <div style={styles.groupControls}>
-            <select
-              value={currentGroupId}
-              onChange={(event) => setCurrentGroupId(event.target.value)}
-              style={styles.select}
-            >
-              {groups.map((group) => (
-                <option key={group.id} value={group.id}>{group.name}</option>
-              ))}
-            </select>
-
-            <div style={styles.groupCreateRow}>
+          <section style={styles.panel}>
+            <div style={styles.panelHeader}>Add expense</div>
+            <div style={styles.inputRow}>
               <input
                 style={styles.input}
-                value={groupNameInput}
-                onChange={(event) => setGroupNameInput(event.target.value)}
-                onKeyDown={(event) => event.key === 'Enter' && createGroup()}
-                placeholder="Create a new group"
-                aria-label="New group name"
+                value={sentence}
+                onChange={(event) => setSentence(event.target.value)}
+                onKeyDown={(event) => event.key === 'Enter' && handleSubmit()}
+                placeholder="Dinner was 1800 and we split it 4 ways"
+                aria-label="Split sentence"
               />
-              <button style={styles.buttonGhost} onClick={createGroup}>Create group</button>
-            </div>
-
-            <div style={styles.joinCodeCard}>
-              <div style={styles.panelSubLabel}>Current group code</div>
-              <div style={styles.joinCode}>{currentGroup?.join_code || '—'}</div>
-            </div>
-
-            <div style={styles.groupCreateRow}>
-              <input
-                style={styles.input}
-                value={joinCodeInput}
-                onChange={(event) => setJoinCodeInput(event.target.value)}
-                onKeyDown={(event) => event.key === 'Enter' && joinGroupByCode()}
-                placeholder="Enter a friend’s join code"
-                aria-label="Friend join code"
-              />
-              <button style={styles.buttonGhost} onClick={joinGroupByCode}>Join group</button>
-            </div>
-          </div>
-        </section>
-
-        <section style={styles.panel}>
-          <div style={styles.panelHeader}>Ask SmartSplit</div>
-          <div style={styles.inputRow}>
-            <input
-              style={styles.input}
-              value={sentence}
-              onChange={(event) => setSentence(event.target.value)}
-              onKeyDown={(event) => event.key === 'Enter' && handleSubmit()}
-              placeholder="Dinner was 1800 and we split it 4 ways"
-              aria-label="Split sentence"
-            />
-            <button style={styles.button} onClick={handleSubmit} disabled={loading}>
-              {loading ? 'Parsing...' : 'Split it'}
-            </button>
-          </div>
-
-          {error && <div style={styles.error}>{error}</div>}
-
-          <div style={styles.examplesRow}>
-            {examples.map((example) => (
-              <button key={example} style={styles.exampleChip} onClick={() => setSentence(example)}>
-                {example}
+              <button style={styles.button} onClick={handleSubmit} disabled={loading}>
+                {loading ? 'Parsing...' : 'Split it'}
               </button>
-            ))}
-          </div>
-        </section>
+            </div>
 
-        <section style={styles.panel}>
-          <div style={styles.panelHeader}>{currentGroup ? currentGroup.name : 'Group'} expenses</div>
-          {visibleExpenses.length === 0 ? (
-            <div style={styles.emptyState}>No expenses in this group yet.</div>
-          ) : (
-            <div style={styles.list}>
-              {visibleExpenses.map((expense) => (
-                <div key={expense.id} style={styles.expenseItem}>
-                  <div style={styles.expenseEmoji}>{expense.emoji}</div>
-                  <div style={styles.expenseContent}>
-                    <div style={styles.expenseName}>{expense.name}</div>
-                    <div style={styles.expenseMeta}>paid by {expense.paidBy}</div>
-                  </div>
-                  <div style={styles.expenseAmount}>{formatMoney(expense.amount)}</div>
-                  <button style={styles.removeBtn} onClick={() => removeExpense(expense.id)} aria-label={`Remove ${expense.name}`}>
-                    ×
-                  </button>
-                </div>
+            {error && <div style={styles.error}>{error}</div>}
+
+            <div style={styles.examplesRow}>
+              {examples.map((example) => (
+                <button key={example} style={styles.exampleChip} onClick={() => setSentence(example)}>
+                  {example}
+                </button>
               ))}
             </div>
-          )}
-        </section>
+          </section>
+
+          <section style={styles.panel}>
+            <div style={styles.panelHeader}>Group members</div>
+            <div style={styles.memberGrid}>
+              {(currentMembers || []).map((member) => (
+                <div key={member} style={styles.memberChip}>{member}</div>
+              ))}
+            </div>
+          </section>
+
+          <section style={styles.panel}>
+            <div style={styles.panelHeader}>Recent expenses</div>
+            {visibleExpenses.length === 0 ? (
+              <div style={styles.emptyState}>No expenses in this group yet.</div>
+            ) : (
+              <div style={styles.list}>
+                {visibleExpenses.map((expense) => (
+                  <div key={expense.id} style={styles.expenseItem}>
+                    <div style={styles.expenseEmoji}>{expense.emoji}</div>
+                    <div style={styles.expenseContent}>
+                      <div style={styles.expenseName}>{expense.name}</div>
+                      <div style={styles.expenseMeta}>paid by {expense.paidBy}</div>
+                    </div>
+                    <div style={styles.expenseAmount}>{formatMoney(expense.amount)}</div>
+                    <button style={styles.removeBtn} onClick={() => removeExpense(expense.id)} aria-label={`Remove ${expense.name}`}>
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
       </div>
     </main>
   );
@@ -486,17 +545,47 @@ export default function Home() {
 const styles = {
   page: {
     minHeight: '100vh',
-    background: 'linear-gradient(135deg, #eef4ff 0%, #f8fafc 100%)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '32px 16px',
-    color: '#0f172a',
+    background: 'linear-gradient(135deg, #f3f7ff 0%, #eefaf7 100%)',
+    padding: '30px 18px',
     fontFamily: 'Inter, system-ui, sans-serif',
+    color: '#0f172a',
   },
   shell: {
-    width: '100%',
-    maxWidth: 980,
+    maxWidth: 1280,
+    margin: '0 auto',
+    display: 'grid',
+    gridTemplateColumns: '320px minmax(0, 1fr)',
+    gap: 20,
+  },
+  sidebar: {
+    background: '#ffffff',
+    border: '1px solid #e2e8f0',
+    borderRadius: 28,
+    padding: 18,
+    boxShadow: '0 22px 50px -28px rgba(15, 23, 42, 0.45)',
+    display: 'grid',
+    alignContent: 'start',
+    gap: 18,
+  },
+  brandRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    paddingBottom: 4,
+  },
+  brandDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 999,
+    background: 'linear-gradient(135deg, #2563eb, #34d399)',
+    boxShadow: '0 0 0 6px rgba(37, 99, 235, 0.12)',
+  },
+  brandName: {
+    marginTop: 4,
+    fontSize: 18,
+    fontWeight: 800,
+  },
+  mainContent: {
     display: 'grid',
     gap: 18,
   },
@@ -507,15 +596,15 @@ const styles = {
     gap: 12,
   },
   eyebrow: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 800,
     letterSpacing: '0.12em',
     textTransform: 'uppercase',
-    color: '#4567d8',
+    color: '#64748b',
   },
   title: {
     margin: '8px 0 0',
-    fontSize: 'clamp(2rem, 5vw, 2.8rem)',
+    fontSize: 'clamp(2rem, 4vw, 2.8rem)',
     lineHeight: 1.1,
     letterSpacing: '-0.04em',
   },
@@ -537,8 +626,8 @@ const styles = {
     background: '#ffffff',
     border: '1px solid #dfe8f7',
     borderRadius: 20,
-    boxShadow: '0 18px 40px -24px rgba(15, 23, 42, 0.35)',
-    padding: 20,
+    padding: 22,
+    boxShadow: '0 18px 30px -26px rgba(15, 23, 42, 0.4)',
   },
   cardLabel: {
     color: '#64748b',
@@ -549,7 +638,7 @@ const styles = {
   },
   cardValue: {
     marginTop: 12,
-    fontSize: 'clamp(1.7rem, 3vw, 2.5rem)',
+    fontSize: 'clamp(1.8rem, 3vw, 2.5rem)',
     fontWeight: 800,
     letterSpacing: '-0.05em',
   },
@@ -557,8 +646,8 @@ const styles = {
     background: '#ffffff',
     border: '1px solid #dfe8f7',
     borderRadius: 22,
-    boxShadow: '0 18px 40px -24px rgba(15, 23, 42, 0.35)',
     padding: 20,
+    boxShadow: '0 18px 30px -28px rgba(15, 23, 42, 0.35)',
   },
   panelHeader: {
     fontWeight: 800,
@@ -566,16 +655,79 @@ const styles = {
     fontSize: 18,
   },
   panelSubLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 700,
     letterSpacing: '0.08em',
     color: '#64748b',
     textTransform: 'uppercase',
   },
-  authCard: {
+  userCard: {
+    background: '#f8fafc',
+    border: '1px solid #e2e8f0',
+    borderRadius: 16,
+    padding: 14,
     display: 'grid',
+    gap: 6,
+  },
+  userBadge: {
+    fontSize: 18,
+    fontWeight: 800,
+    color: '#0f172a',
+    wordBreak: 'break-word',
+  },
+  userBadgeLarge: {
+    marginTop: 6,
+    fontSize: 22,
+    fontWeight: 900,
+    color: '#1d4ed8',
+    wordBreak: 'break-word',
+  },
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: 800,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    color: '#64748b',
+  },
+  groupList: {
+    display: 'grid',
+    gap: 10,
+  },
+  groupItem: {
+    width: '100%',
+    border: '1px solid #e2e8f0',
+    background: '#f8fafc',
+    borderRadius: 14,
+    padding: '12px 14px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 12,
-    padding: '8px 0 0',
+    textAlign: 'left',
+    cursor: 'pointer',
+    color: '#0f172a',
+  },
+  groupItemActive: {
+    background: '#eff6ff',
+    borderColor: '#bfdbfe',
+  },
+  groupName: {
+    fontWeight: 800,
+    fontSize: 15,
+  },
+  groupMeta: {
+    marginTop: 4,
+    color: '#64748b',
+    fontSize: 11,
+  },
+  groupPill: {
+    background: '#dbeafe',
+    color: '#1d4ed8',
+    borderRadius: 999,
+    padding: '5px 8px',
+    fontSize: 10,
+    fontWeight: 800,
+    letterSpacing: '0.08em',
   },
   authRow: {
     display: 'flex',
@@ -583,12 +735,6 @@ const styles = {
     justifyContent: 'space-between',
     gap: 12,
     flexWrap: 'wrap',
-  },
-  userBadge: {
-    marginTop: 6,
-    fontSize: 22,
-    fontWeight: 900,
-    color: '#1d4ed8',
   },
   groupControls: {
     display: 'grid',
@@ -599,29 +745,19 @@ const styles = {
     gap: 10,
     flexWrap: 'wrap',
   },
-  joinCodeCard: {
+  joinCard: {
     display: 'grid',
-    gap: 8,
-    padding: '14px 16px',
-    borderRadius: 14,
+    gap: 10,
+    padding: 12,
+    borderRadius: 16,
     border: '1px solid #dbeafe',
     background: '#eff6ff',
   },
   joinCode: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: 900,
-    letterSpacing: '0.14em',
+    letterSpacing: '0.12em',
     color: '#1d4ed8',
-  },
-  select: {
-    width: '100%',
-    padding: '14px 14px',
-    borderRadius: 12,
-    border: '1px solid #dfe8f7',
-    background: '#f8fafc',
-    fontSize: 15,
-    fontWeight: 600,
-    color: '#0f172a',
   },
   inputRow: {
     display: 'flex',
@@ -630,12 +766,22 @@ const styles = {
   },
   input: {
     flex: 1,
-    minWidth: 220,
-    padding: '15px 16px',
+    minWidth: 180,
+    padding: '14px 16px',
     borderRadius: 14,
     border: '1px solid #dbe3f1',
     background: '#f8fafc',
     fontSize: 15,
+    outline: 'none',
+    color: '#0f172a',
+  },
+  inputSmall: {
+    width: '100%',
+    padding: '12px 14px',
+    borderRadius: 12,
+    border: '1px solid #dbe3f1',
+    background: '#ffffff',
+    fontSize: 14,
     outline: 'none',
     color: '#0f172a',
   },
@@ -646,7 +792,7 @@ const styles = {
     color: '#ffffff',
     fontWeight: 800,
     fontSize: 15,
-    padding: '15px 22px',
+    padding: '14px 20px',
     cursor: 'pointer',
     boxShadow: '0 16px 30px -20px rgba(37,99,235,0.9)',
   },
@@ -657,7 +803,7 @@ const styles = {
     color: '#1d4ed8',
     fontWeight: 800,
     fontSize: 15,
-    padding: '15px 18px',
+    padding: '14px 18px',
     cursor: 'pointer',
   },
   error: {
@@ -684,6 +830,20 @@ const styles = {
     fontSize: 12,
     fontWeight: 700,
     cursor: 'pointer',
+  },
+  memberGrid: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  memberChip: {
+    background: '#f8fafc',
+    border: '1px solid #e2e8f0',
+    borderRadius: 999,
+    padding: '8px 12px',
+    color: '#334155',
+    fontWeight: 700,
+    fontSize: 12,
   },
   list: {
     display: 'grid',
