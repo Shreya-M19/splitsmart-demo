@@ -6,7 +6,9 @@ import { supabase } from '../lib/supabaseClient';
 const STORAGE_KEY = 'splitsmart.groups.v1';
 const CURRENT_GROUP_KEY = 'splitsmart.currentGroupId';
 const AUTH_KEY = 'splitsmart.auth.user.v1';
-const DEFAULT_USER = 'You';
+const USERS_KEY = 'splitsmart.users.v1';
+
+const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
 
 const defaultResult = { amount: 0, people: 0, each: 0 };
 const examples = [
@@ -21,7 +23,7 @@ const formatMoney = (value) =>
 const createId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 const generateJoinCode = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 
-function parseExpenseText(text, groupId, paidByUser = DEFAULT_USER) {
+function parseExpenseText(text, groupId, paidByUser = '') {
   const cleaned = String(text || '').trim();
   if (!cleaned) return null;
 
@@ -30,7 +32,7 @@ function parseExpenseText(text, groupId, paidByUser = DEFAULT_USER) {
     group_id: groupId,
     emoji: '🧾',
     name: 'Expense',
-    paidBy: paidByUser,
+    paidBy: paidByUser || 'Unknown',
     amount: 0,
   };
 
@@ -50,10 +52,10 @@ function buildDefaultGroups() {
       id: 'group-default',
       name: 'My Group',
       join_code: 'MYGRP1',
-      members: ['You'],
+      members: ['demo@local.test'],
       expenses: [
-        { id: 'seed-1', group_id: 'group-default', emoji: '🍽️', name: 'Dinner', paidBy: 'Aisha', amount: 1800 },
-        { id: 'seed-2', group_id: 'group-default', emoji: '🚕', name: 'Cab', paidBy: 'Raj', amount: 400 },
+        { id: 'seed-1', group_id: 'group-default', emoji: '🍽️', name: 'Dinner', paidBy: 'aisha@example.com', amount: 1800 },
+        { id: 'seed-2', group_id: 'group-default', emoji: '🚕', name: 'Cab', paidBy: 'raj@example.com', amount: 400 },
       ],
     },
   ];
@@ -64,8 +66,8 @@ export default function Home() {
   const [currentGroupId, setCurrentGroupId] = useState('');
   const [groupNameInput, setGroupNameInput] = useState('');
   const [joinCodeInput, setJoinCodeInput] = useState('');
-  const [authInput, setAuthInput] = useState(DEFAULT_USER);
-  const [currentUser, setCurrentUser] = useState(DEFAULT_USER);
+  const [authInput, setAuthInput] = useState('');
+  const [currentUser, setCurrentUser] = useState('');
   const [sentence, setSentence] = useState(examples[0]);
   const [result, setResult] = useState(defaultResult);
   const [error, setError] = useState('');
@@ -73,8 +75,8 @@ export default function Home() {
 
   useEffect(() => {
     try {
-      const savedUser = localStorage.getItem(AUTH_KEY) || DEFAULT_USER;
-      const cleanUser = savedUser.trim() || DEFAULT_USER;
+      const savedUser = localStorage.getItem(AUTH_KEY) || '';
+      const cleanUser = normalizeEmail(savedUser);
       setCurrentUser(cleanUser);
       setAuthInput(cleanUser);
 
@@ -143,27 +145,60 @@ export default function Home() {
     });
   }, [visibleExpenses, currentGroup]);
 
+  const ensureUserRecord = (email) => {
+    const normalized = normalizeEmail(email);
+    if (!normalized || !normalized.includes('@')) {
+      throw new Error('Please enter a valid email address.');
+    }
+
+    try {
+      const existingUsers = JSON.parse(localStorage.getItem(USERS_KEY) || '[]');
+      const userExists = existingUsers.some((user) => normalizeEmail(user.email) === normalized);
+
+      if (!userExists) {
+        const nextUsers = [...existingUsers, { id: createId('user'), email: normalized, createdAt: new Date().toISOString() }];
+        localStorage.setItem(USERS_KEY, JSON.stringify(nextUsers));
+      }
+    } catch {
+      const nextUsers = [{ id: createId('user'), email: normalized, createdAt: new Date().toISOString() }];
+      localStorage.setItem(USERS_KEY, JSON.stringify(nextUsers));
+    }
+
+    return normalized;
+  };
+
   const loginAsUser = () => {
-    const nextUser = authInput.trim() || DEFAULT_USER;
-    setCurrentUser(nextUser);
-    setAuthInput(nextUser);
+    try {
+      const nextUser = ensureUserRecord(authInput);
+      setCurrentUser(nextUser);
+      setAuthInput(nextUser);
+      localStorage.setItem(AUTH_KEY, nextUser);
+      setError('');
+    } catch (err) {
+      setError(err.message || 'Unable to log in with that email.');
+    }
   };
 
   const logoutUser = () => {
-    setCurrentUser(DEFAULT_USER);
-    setAuthInput(DEFAULT_USER);
+    setCurrentUser('');
+    setAuthInput('');
     localStorage.removeItem(AUTH_KEY);
+    setError('');
   };
 
   const createGroup = () => {
     const name = groupNameInput.trim();
+    if (!currentUser) {
+      setError('Login with an email before creating a group.');
+      return;
+    }
     if (!name) return;
 
     const newGroup = {
       id: createId('group'),
       name,
       join_code: generateJoinCode(),
-      members: [currentUser],
+      members: currentUser ? [currentUser] : [],
       expenses: [],
     };
 
@@ -174,6 +209,10 @@ export default function Home() {
 
   const joinGroupByCode = async () => {
     const code = joinCodeInput.trim();
+    if (!currentUser) {
+      setError('Login with an email before joining a group.');
+      return;
+    }
     if (!code) {
       setError('Enter a join code to join a group.');
       return;
@@ -196,7 +235,7 @@ export default function Home() {
             group.id === existingGroup.id
               ? {
                   ...group,
-                  members: Array.from(new Set([...(group.members || []), 'Friend'])),
+                  members: Array.from(new Set([...(group.members || []), currentUser || 'friend@demo.test'])),
                 }
               : group,
           ),
@@ -207,7 +246,7 @@ export default function Home() {
           id: joinedId,
           name: 'Joined Group',
           join_code: normalizedCode,
-          members: ['You', 'Friend'],
+          members: [currentUser || 'friend@demo.test'],
           expenses: [],
         };
         setGroups((list) => [...list, joinedGroup]);
@@ -223,6 +262,10 @@ export default function Home() {
 
   const handleSubmit = async () => {
     const text = sentence.trim();
+    if (!currentUser) {
+      setError('Login with an email before adding an expense.');
+      return;
+    }
     if (!text || !currentGroup) return;
 
     setLoading(true);
@@ -318,12 +361,12 @@ export default function Home() {
         </section>
 
         <section style={styles.panel}>
-          <div style={styles.panelHeader}>Friend login</div>
+          <div style={styles.panelHeader}>Email login</div>
           <div style={styles.authCard}>
             <div style={styles.authRow}>
               <div>
                 <div style={styles.panelSubLabel}>Logged in as</div>
-                <div style={styles.userBadge}>{currentUser}</div>
+                <div style={styles.userBadge}>{currentUser || 'No one logged in'}</div>
               </div>
               <button style={styles.buttonGhost} onClick={logoutUser}>Log out</button>
             </div>
@@ -333,10 +376,11 @@ export default function Home() {
                 value={authInput}
                 onChange={(event) => setAuthInput(event.target.value)}
                 onKeyDown={(event) => event.key === 'Enter' && loginAsUser()}
-                placeholder="Type a friend name"
-                aria-label="Friend name"
+                placeholder="Enter email address"
+                aria-label="Email address"
+                type="email"
               />
-              <button style={styles.buttonGhost} onClick={loginAsUser}>Enter app</button>
+              <button style={styles.buttonGhost} onClick={loginAsUser}>Login</button>
             </div>
           </div>
         </section>
